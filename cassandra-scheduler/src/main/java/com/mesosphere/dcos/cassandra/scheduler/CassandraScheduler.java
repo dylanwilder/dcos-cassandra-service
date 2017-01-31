@@ -53,6 +53,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 public class CassandraScheduler implements Scheduler, Observer {
@@ -78,8 +79,8 @@ public class CassandraScheduler implements Scheduler, Observer {
     private final Capabilities capabilities;
     private final ConfigurationManager configurationManager;
 
-    // use capacity 2, because 1 *will* block until resources are removed:
-    private final BlockingQueue<Collection<Object>> resourcesQueue = new ArrayBlockingQueue<>(2);
+    private final BlockingQueue<Collection<Object>> resourcesQueue = new ArrayBlockingQueue<>(1);
+    private AtomicBoolean isSchedulerRegistered = new AtomicBoolean(false);
 
     private static TaskKiller taskKiller;
 
@@ -141,6 +142,15 @@ public class CassandraScheduler implements Scheduler, Observer {
     public void registered(SchedulerDriver driver,
                            Protos.FrameworkID frameworkId,
                            Protos.MasterInfo masterInfo) {
+        // Call re-register and return early if registered() has already been called once
+        // in the lifetime of this object.
+        if (!isSchedulerRegistered.compareAndSet(false, true)) {
+            LOGGER.info("Scheduler is already registered, calling reregistered()");
+            reregistered(driver, masterInfo);
+            return;
+        }
+
+        // The following is executed only once in the lifetime of this object.
         final String frameworkIdValue = frameworkId.getValue();
         LOGGER.info("Framework registered : id = {}", frameworkIdValue);
         try {
@@ -153,10 +163,7 @@ public class CassandraScheduler implements Scheduler, Observer {
             Plan plan = new CassandraPlan(
                     defaultConfigurationManager,
                     ReconciliationPhase.create(reconciler),
-                    SyncDataCenterPhase.create(
-                            new SeedsManager(
-                                    defaultConfigurationManager, cassandraState, executor, client, stateStore),
-                            executor),
+                    SyncDataCenterPhase.create(seeds, executor),
                     CassandraDaemonPhase.create(
                             cassandraState, offerRequirementProvider, client, defaultConfigurationManager),
                     Arrays.asList(
@@ -417,9 +424,12 @@ public class CassandraScheduler implements Scheduler, Observer {
                 "Scheduler has operations to perform." :
                 "Scheduler has no operations to perform.");
         if (hasOperations) {
-            LOGGER.info("Reviving offers.");
-            driver.reviveOffers();
-            cassandraState.setSuppressed(false);
+            // Revive offers only if they were previously suppressed.
+            if (cassandraState.isSuppressed()) {
+                LOGGER.info("Reviving offers.");
+                driver.reviveOffers();
+                cassandraState.setSuppressed(false);
+            }
         } else {
             LOGGER.info("Suppressing offers.");
             driver.suppressOffers();

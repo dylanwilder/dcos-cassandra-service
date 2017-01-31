@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mesosphere.dcos.cassandra.common.util.JsonUtils;
 import io.dropwizard.Configuration;
+import io.dropwizard.client.HttpClientConfiguration;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -31,12 +32,15 @@ public class MutableSchedulerConfiguration extends Configuration {
       10000L,
       10000L,
       Optional.empty(),
-      250L);
+      250L,
+      "",
+      "");
   private long externalDcSyncMs;
   private String externalDcs;
   private String dcUrl;
   private String phaseStrategy;
   private boolean enableUpgradeSSTableEndpoint;
+  private HttpClientConfiguration httpClientConfiguration;
 
   @JsonProperty("mesos")
   public MesosConfig getMesosConfig() {
@@ -193,6 +197,14 @@ public class MutableSchedulerConfiguration extends Configuration {
     this.enableUpgradeSSTableEndpoint = enableUpgradeSSTableEndpoint;
   }
 
+  @JsonProperty("http_client")
+  public HttpClientConfiguration getHttpClientConfiguration() { return httpClientConfiguration; }
+
+  @JsonProperty("http_client")
+  public void setHttpClientConfiguration(HttpClientConfiguration httpClientConfiguration) {
+    this.httpClientConfiguration = httpClientConfiguration;
+  }
+
   @JsonIgnore
   public CassandraSchedulerConfiguration createConfig() {
     return CassandraSchedulerConfiguration.create(
@@ -208,7 +220,8 @@ public class MutableSchedulerConfiguration extends Configuration {
       externalDcs,
       dcUrl,
       phaseStrategy,
-      enableUpgradeSSTableEndpoint
+      enableUpgradeSSTableEndpoint,
+      httpClientConfiguration
     );
   }
 
@@ -230,14 +243,15 @@ public class MutableSchedulerConfiguration extends Configuration {
       Objects.equals(mesosConfig, that.mesosConfig) &&
       Objects.equals(curatorConfig, that.curatorConfig) &&
       Objects.equals(externalDcs, that.externalDcs) &&
-      Objects.equals(dcUrl, that.dcUrl);
+      Objects.equals(dcUrl, that.dcUrl) &&
+      Objects.equals(httpClientConfiguration, that.httpClientConfiguration);
   }
 
   @Override
   public int hashCode() {
     return Objects.hash(executorConfig, servers, seeds, placementConstraint, cassandraConfig,
       clusterTaskConfig, apiPort, serviceConfig, mesosConfig, curatorConfig,
-      externalDcSyncMs, externalDcs, dcUrl, enableUpgradeSSTableEndpoint);
+      externalDcSyncMs, externalDcs, dcUrl, enableUpgradeSSTableEndpoint, httpClientConfiguration);
   }
 
   @Override

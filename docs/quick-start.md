@@ -12,7 +12,7 @@ enterprise: 'no'
 
         $ dcos package install cassandra
 
- 1. Once the cluster is installed, retrieve connection information by running the `connection` command:
+1. Once the cluster is installed, retrieve connection information by running the `connection` command:
         
         $ dcos cassandra connection
         {
@@ -28,7 +28,6 @@ enterprise: 'no'
             ]
         
         }
-        ```
 
 1. [SSH into a DC/OS node][2]:
 
@@ -60,4 +59,4 @@ enterprise: 'no'
 
         cqlsh> SELECT * FROM demo.map;
 
- [2]: https://docs.mesosphere.com/1.8/administration/access-node/sshcluster/
+ [2]: https://docs.mesosphere.com/1.9/administration/access-node/sshcluster/

@@ -5,7 +5,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.eventbus.Subscribe;
 import com.google.inject.Inject;
 import com.google.protobuf.TextFormat;
-import com.mesosphere.dcos.cassandra.common.CassandraProtos;
+import com.mesosphere.dcos.cassandra.common.config.CassandraConfig;
 import com.mesosphere.dcos.cassandra.common.config.CassandraSchedulerConfiguration;
 import com.mesosphere.dcos.cassandra.common.config.ClusterTaskConfig;
 import com.mesosphere.dcos.cassandra.common.config.ConfigurationManager;
@@ -74,22 +74,7 @@ public class CassandraState extends SchedulerState implements Managed {
 
                 for (Protos.TaskInfo taskInfo : taskInfos) {
                     try {
-                        Protos.TaskInfo unpackedInfo = TaskUtils.unpackTaskInfo(taskInfo);
-                        final CassandraTask cassandraTask = CassandraTask.parse(unpackedInfo);
-
-                        final boolean isTemplateTask = CassandraTemplateTask.isTemplateTaskName(taskInfo.getName());
-                        final CassandraProtos.CassandraData oldCassandraData =
-                                CassandraProtos.CassandraData.parseFrom(unpackedInfo.getData());
-                        if (isTemplateTask && oldCassandraData.getType() != CassandraTask.TYPE.TEMPLATE.ordinal()) {
-                            CassandraData data = CassandraData.parse(unpackedInfo.getData(), isTemplateTask);
-                            Protos.TaskInfo updatedUnpackedInfo =
-                                    Protos.TaskInfo.newBuilder(unpackedInfo).setData(data.getBytes()).build();
-
-                            LOGGER.info("Writing updated TaskInfo for task {} to StateStore to fix corrupted " +
-                                    "CassandraTask.TYPE Enum.", taskInfo.getName());
-                            getStateStore().storeTasks(Arrays.asList(TaskUtils.packTaskInfo(updatedUnpackedInfo)));
-                        }
-
+                        final CassandraTask cassandraTask = CassandraTask.parse(TaskUtils.unpackTaskInfo(taskInfo));
                         LOGGER.debug("Loaded task: {}, type: {}, hostname: {}",
                                 cassandraTask.getName(), cassandraTask.getType().name(), cassandraTask.getHostname());
                         builder.put(cassandraTask.getName(), cassandraTask);
@@ -217,6 +202,12 @@ public class CassandraState extends SchedulerState implements Managed {
         return CassandraContainer.create(daemonTask, templateTask);
     }
 
+    public CassandraContainer createCassandraContainer(
+            String name, String replaceIp) throws ConfigStoreException, PersistenceException {
+        CassandraDaemonTask daemonTask = createReplacementDaemon(name, replaceIp);
+        return createCassandraContainer(daemonTask, CassandraTemplateTask.create(daemonTask, clusterTaskConfig));
+    }
+
     public CassandraContainer moveCassandraContainer(CassandraDaemonTask name)
             throws PersistenceException, ConfigStoreException {
         return createCassandraContainer(moveDaemon(name));
@@ -244,12 +235,31 @@ public class CassandraState extends SchedulerState implements Managed {
         final ServiceConfig serviceConfig = targetConfig.getServiceConfig();
         final String frameworkId = getStateStore().fetchFrameworkId().get().getValue();
         return configuration.createDaemon(
-            frameworkId,
-            name,
-            serviceConfig.getRole(),
-            serviceConfig.getPrincipal(),
-            targetConfigName.toString()
+                frameworkId,
+                name,
+                serviceConfig.getRole(),
+                serviceConfig.getPrincipal(),
+                targetConfigName.toString()
         );
+    }
+
+    public CassandraDaemonTask createReplacementDaemon(String name, String replaceIp) throws
+            PersistenceException, ConfigStoreException {
+        final CassandraSchedulerConfiguration targetConfig = configuration.getTargetConfig();
+        final UUID targetConfigName = configuration.getTargetConfigName();
+        final ServiceConfig serviceConfig = targetConfig.getServiceConfig();
+        final String frameworkId = getStateStore().fetchFrameworkId().get().getValue();
+
+        final CassandraConfig.Builder configBuilder = new CassandraConfig.Builder(targetConfig.getCassandraConfig());
+        configBuilder.setReplaceIp(replaceIp);
+
+        return configuration.createDaemon(
+                frameworkId,
+                name,
+                serviceConfig.getRole(),
+                serviceConfig.getPrincipal(),
+                targetConfigName.toString(),
+                configBuilder.build());
     }
 
     public CassandraDaemonTask moveDaemon(CassandraDaemonTask daemon)
@@ -257,10 +267,10 @@ public class CassandraState extends SchedulerState implements Managed {
         final CassandraSchedulerConfiguration targetConfig = configuration.getTargetConfig();
         final ServiceConfig serviceConfig = targetConfig.getServiceConfig();
         CassandraDaemonTask updated = configuration.moveDaemon(
-            daemon,
-            getStateStore().fetchFrameworkId().get().getValue(),
-            serviceConfig.getRole(),
-            serviceConfig.getPrincipal());
+                daemon,
+                getStateStore().fetchFrameworkId().get().getValue(),
+                serviceConfig.getRole(),
+                serviceConfig.getPrincipal());
         update(updated);
 
         Optional<Protos.TaskInfo> templateOptional = getTemplate(updated);
@@ -273,7 +283,7 @@ public class CassandraState extends SchedulerState implements Managed {
     }
 
     private Optional<Protos.TaskInfo> getTemplate(CassandraDaemonTask daemon) {
-            String templateTaskName = CassandraTemplateTask.toTemplateTaskName(daemon.getName());
+        String templateTaskName = CassandraTemplateTask.toTemplateTaskName(daemon.getName());
         try {
             Optional<Protos.TaskInfo> info = getStateStore().fetchTask(templateTaskName);
             LOGGER.info("Fetched template task for daemon '{}': {}",
@@ -624,22 +634,7 @@ public class CassandraState extends SchedulerState implements Managed {
                     }
 
                     if (status.hasData()) {
-                        final boolean isTemplateTask = CassandraTemplateTask.isTemplateTaskName(
-                                cassandraTask.getName());
-                        CassandraTaskStatus cassandraTaskStatus = CassandraTaskStatus.parse(status, isTemplateTask);
-                        cassandraTask = cassandraTask.update(cassandraTaskStatus);
-
-                        final CassandraProtos.CassandraData oldCassandraData =
-                                CassandraProtos.CassandraData.parseFrom(status.getData());
-                        if (isTemplateTask && oldCassandraData.getType() != CassandraTask.TYPE.TEMPLATE.ordinal()) {
-                            CassandraData data = CassandraData.parse(status.getData(), isTemplateTask);
-                            Protos.TaskStatus updatedStatus =
-                                    Protos.TaskStatus.newBuilder(status).setData(data.getBytes()).build();
-
-                            LOGGER.info("Writing updated TaskStatus for task {} to StateStore to fix corrupted " +
-                                    "CassandraTask.TYPE Enum.", cassandraTask.getName());
-                            getStateStore().storeStatus(updatedStatus);
-                        }
+                        cassandraTask = cassandraTask.update(CassandraTaskStatus.parse(status));
                     } else {
                         cassandraTask = cassandraTask.update(status.getState());
                     }
@@ -675,6 +670,7 @@ public class CassandraState extends SchedulerState implements Managed {
         }
         return false;
     }
+
     public synchronized void refreshTasks() {
         LOGGER.info("Refreshing tasks");
         loadTasks();
@@ -713,7 +709,7 @@ public class CassandraState extends SchedulerState implements Managed {
 
     }
 
-    public Set<Protos.TaskStatus> getTaskStatuses()  {
+    public Set<Protos.TaskStatus> getTaskStatuses() {
         return new HashSet<>(getStateStore().fetchStatuses());
     }
 }
